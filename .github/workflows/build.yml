@@ -84,6 +84,34 @@ jobs:
             jprm repo add ./manifest.json "${{ steps.jprm.outputs.artifact }}"
           fi
 
+      - name: Normalize manifest sourceUrl to raw mirror
+        if: ${{ github.event_name == 'release' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 -c "import re, pathlib; t=pathlib.Path('build.yaml').read_text(encoding='utf-8'); m=re.search(r'^version:\\s*\\\"?([^\\\"]+)\\\"?', t, re.M); print(m.group(1) if m else '')")"
+          repo="${{ github.repository }}"
+          python3 - "$version" "$repo" <<'PY'
+import json
+import sys
+
+version = sys.argv[1]
+repo = sys.argv[2]
+raw_url = f"https://raw.githubusercontent.com/{repo}/main/mediatracker/mediatracker_{version}.zip"
+
+with open('manifest.json', 'r', encoding='utf-8') as f:
+    data = json.load(f)
+
+if data and data[0].get('versions'):
+    data[0]['versions'][0]['sourceUrl'] = raw_url
+
+with open('manifest.json', 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=4)
+    f.write('\n')
+
+print(f"Updated top manifest sourceUrl to {raw_url}")
+PY
+
       - name: Setup GPG keys for signed commits
         if: ${{ github.event_name == 'release' && env.GPG_PRIVATE_KEY != '' }}
         uses: crazy-max/ghaction-import-gpg@v4
@@ -99,7 +127,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ./manifest.json
+          git add ./manifest.json ./mediatracker/
           if git diff --cached --quiet; then
             echo "No manifest changes to commit"
             exit 0
