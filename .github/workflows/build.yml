@@ -11,6 +11,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      MSBUILDDISABLENODEREUSE: '1'
+      DOTNET_MULTILEVEL_LOOKUP: '0'
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
