@@ -1,11 +1,14 @@
 
-using Jellyfin.Data.Entities;
+using System;
+using System.Collections.Generic;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Model.Entities;
 
 public class PreviousAction
 {
     private const double minimumProgressChangeToForceUpdate = 0.01;
     private const long minimumNumberOfSecondsBetweenProgressUpdate = 30;
+
     public PreviousAction(string action, float progress)
     {
         this.action = action;
@@ -42,7 +45,6 @@ public class PreviousAction
             return false;
         }
 
-
         if (DateTime.Now.Subtract(this.date).TotalSeconds >= minimumNumberOfSecondsBetweenProgressUpdate)
         {
             return false;
@@ -56,13 +58,13 @@ public class PreviousActions
 {
     public PreviousActions()
     {
-        progressDictionary = [];
-        markedAsSeenHistory = [];
+        progressDictionary = new Dictionary<Tuple<Guid, Guid>, PreviousAction>();
+        markedAsSeenHistory = new Dictionary<Tuple<Guid, Guid>, DateTime>();
     }
 
-    public bool ShouldSkipAction(User user, Video video, float progress, string action)
+    public bool ShouldSkipAction(dynamic user, Video video, float progress, string action)
     {
-        var id = Tuple.Create(user.Id, video.Id);
+        var id = Tuple.Create((Guid)user.Id, (Guid)video.Id);
 
         if (progressDictionary.TryGetValue(id, out PreviousAction? value))
         {
@@ -71,15 +73,15 @@ public class PreviousActions
                 return true;
             }
         }
-        
+
         progressDictionary[id] = new PreviousAction(action, progress);
 
         return false;
     }
 
-    public bool CanMarkAsSeen(User user, Video video)
+    public bool CanMarkAsSeen(dynamic user, Video video)
     {
-        var id = Tuple.Create(user.Id, video.Id);
+        var id = Tuple.Create((Guid)user.Id, (Guid)video.Id);
 
         if (markedAsSeenHistory.TryGetValue(id, out DateTime value))
         {
@@ -93,6 +95,6 @@ public class PreviousActions
         return true;
     }
 
-    private Dictionary<Tuple<System.Guid, System.Guid>, DateTime> markedAsSeenHistory;
-    private Dictionary<Tuple<System.Guid, System.Guid>, PreviousAction> progressDictionary;
+    private Dictionary<Tuple<Guid, Guid>, DateTime> markedAsSeenHistory;
+    private Dictionary<Tuple<Guid, Guid>, PreviousAction> progressDictionary;
 }

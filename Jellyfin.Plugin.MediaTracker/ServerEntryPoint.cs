@@ -13,7 +13,7 @@ using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-using Jellyfin.Data.Entities;
+using MediaBrowser.Controller.Entities;
 
 /// <summary>
 /// Class ServerEntryPoint
@@ -304,17 +304,17 @@ public class ServerEntryPoint : IHostedService, IDisposable
         }
     }
 
-    private async Task UpdateProgress(User user, dynamic payload)
+    private async Task UpdateProgress(dynamic user, dynamic payload)
     {
         await MediaTrackerPutAsync(user, payload, "/api/progress/by-external-id");
     }
 
-    private async Task MarkAsSeen(User user, dynamic payload)
+    private async Task MarkAsSeen(dynamic user, dynamic payload)
     {
         await MediaTrackerPutAsync(user, payload, "/api/seen/by-external-id");
     }
 
-    private async Task MediaTrackerPutAsync(User user, dynamic payload, string path)
+    private async Task MediaTrackerPutAsync(dynamic user, dynamic payload, string path)
     {
         var mediaTrackerUrl = Plugin.Instance?.PluginConfiguration?.mediaTrackerUrl;
 
@@ -324,11 +324,12 @@ public class ServerEntryPoint : IHostedService, IDisposable
             return;
         }
 
-        var apiToken = Plugin.Instance?.PluginConfiguration?.GetApiToken(user.Id);
+        var apiToken = Plugin.Instance?.PluginConfiguration?.GetApiToken((Guid)user.Id);
 
         if (apiToken == null)
         {
-            logger.LogError("Missing MediaTracker access token for user {1}", user.Username);
+            string username = (string)user.Username;
+            logger.LogError("Missing MediaTracker access token for user {0}", username);
             return;
         }
 

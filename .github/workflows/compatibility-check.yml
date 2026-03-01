@@ -1,0 +1,43 @@
+name: Compatibility check
+
+on:
+  schedule:
+    # run every hour and let the job filter to 06:00 Europe/Madrid
+    - cron: '0 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check local hour (Europe/Madrid)
+        id: tzcheck
+        run: |
+          HOUR=$(TZ=Europe/Madrid date +"%H")
+          echo "Europe/Madrid hour: $HOUR"
+          if [ "$HOUR" != "06" ]; then
+            echo "Not 06:00 Europe/Madrid — skipping job." 
+            exit 0
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Update Jellyfin packages (try latest, ignore failures)
+        run: |
+          dotnet add Jellyfin.Plugin.MediaTracker/Jellyfin.Plugin.MediaTracker.csproj package Jellyfin.Controller --prerelease || true
+          dotnet add Jellyfin.Plugin.MediaTracker/Jellyfin.Plugin.MediaTracker.csproj package Jellyfin.Model --prerelease || true
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore MediaTracker.sln
+
+      - name: Run tests
+        run: dotnet test --no-build --verbosity minimal
