@@ -36,6 +36,45 @@ jobs:
         with:
           dotnet-target: net9.0
 
+      - name: Validate release version and artifact
+        if: ${{ github.event_name == 'release' }}
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          artifact_path="${{ steps.jprm.outputs.artifact }}"
+          artifact_name="$(basename "$artifact_path")"
+
+          build_version="$(grep '^version:' build.yaml | sed -E 's/version:[[:space:]]*"?([^\"]+)"?/\1/')"
+
+          manifest_version="$(python - <<'PY'
+import json
+with open('manifest.json', 'r', encoding='utf-8') as f:
+    data = json.load(f)
+print(data[0]['versions'][0]['version'])
+PY
+          )"
+
+          expected_zip="mediatracker_${tag_version}.zip"
+
+          echo "tag_version=$tag_version"
+          echo "build_version=$build_version"
+          echo "manifest_version=$manifest_version"
+          echo "artifact_name=$artifact_name"
+
+          if [ "$build_version" != "$tag_version" ]; then
+            echo "build.yaml version ($build_version) does not match tag version ($tag_version)"
+            exit 1
+          fi
+
+          if [ "$manifest_version" != "$tag_version" ]; then
+            echo "manifest.json version ($manifest_version) does not match tag version ($tag_version)"
+            exit 1
+          fi
+
+          if [ "$artifact_name" != "$expected_zip" ]; then
+            echo "artifact name ($artifact_name) does not match expected ($expected_zip)"
+            exit 1
+          fi
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
