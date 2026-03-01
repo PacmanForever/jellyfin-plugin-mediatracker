@@ -8,12 +8,12 @@
         "category": "General",
         "versions": [
             {
-                "version": "2.0.0.5",
+                "version": "2.0.0.6",
                 "changelog": "- \"refactored ShouldSkipAction\"",
                 "targetAbi": "10.9.1.0",
-                "sourceUrl": "https://raw.githubusercontent.com/PacmanForever/jellyfin-plugin-mediatracker/main/mediatracker/mediatracker_2.0.0.5.zip",
-                "checksum": "bc19cea6c66b38c711c93d8d29af2b0d",
-                "timestamp": "2026-03-01T16:19:43Z"
+                "sourceUrl": "https://raw.githubusercontent.com/PacmanForever/jellyfin-plugin-mediatracker/main/mediatracker/mediatracker_2.0.0.6.zip",
+                "checksum": "",
+                "timestamp": "2026-03-01T18:00:00Z"
             },
             {
                 "version": "2.0.0.1",
