@@ -12,8 +12,8 @@
                 "changelog": "- \"refactored ShouldSkipAction\"",
                 "targetAbi": "10.9.1.0",
                 "sourceUrl": "https://raw.githubusercontent.com/PacmanForever/jellyfin-plugin-mediatracker/main/mediatracker/mediatracker_2.0.0.6.zip",
-                "checksum": "",
-                "timestamp": "2026-03-01T18:00:00Z"
+                "checksum": "e2de20f3d8530c173199a939464f7ae1",
+                "timestamp": "2026-03-01T17:32:28Z"
             },
             {
                 "version": "2.0.0.1",

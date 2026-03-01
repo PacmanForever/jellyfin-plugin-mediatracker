@@ -91,7 +91,21 @@ jobs:
           set -euo pipefail
           version="$(python3 -c "import re, pathlib; t=pathlib.Path('build.yaml').read_text(encoding='utf-8'); m=re.search(r'^version:\\s*\\\"?([^\\\"]+)\\\"?', t, re.M); print(m.group(1) if m else '')")"
           repo="${{ github.repository }}"
-          python3 -c "import json, pathlib; p=pathlib.Path('manifest.json'); d=json.loads(p.read_text(encoding='utf-8')); raw=f'https://raw.githubusercontent.com/{repo}/main/mediatracker/mediatracker_{version}.zip'; d[0]['versions'][0]['sourceUrl']=raw; p.write_text(json.dumps(d, indent=4)+'\\n', encoding='utf-8'); print(f'Updated top manifest sourceUrl to {raw}')"
+          python3 - "$version" "$repo" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          version = sys.argv[1]
+          repo = sys.argv[2]
+          raw = f"https://raw.githubusercontent.com/{repo}/main/mediatracker/mediatracker_{version}.zip"
+
+          p = pathlib.Path('manifest.json')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          d[0]['versions'][0]['sourceUrl'] = raw
+          p.write_text(json.dumps(d, indent=4) + '\n', encoding='utf-8')
+          print(f"Updated top manifest sourceUrl to {raw}")
+          PY
 
       - name: Setup GPG keys for signed commits
         if: ${{ github.event_name == 'release' && env.GPG_PRIVATE_KEY != '' }}
