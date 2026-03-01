@@ -1,4 +1,4 @@
-name: 'Publish Plugin'
+name: Publish Plugin
 
 permissions: write-all
 
@@ -16,43 +16,36 @@ jobs:
       DOTNET_MULTILEVEL_LOOKUP: '0'
       GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          ref: "main"
+          ref: main
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@607fce577a46308457984d59e4954e075820f10a # tag=v3
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
-          
-      - name: Setup jprm
-        run: |
-          pip install --user jprm
 
-      - name: Build Jellyfin Plugin
-        uses: oddstr13/jellyfin-plugin-repository-manager@4a2b165a3dc2cfc392db865a85f23c02e9f78c68 # v0.5.1
+      - name: Setup jprm
+        run: pip install --user jprm
+
+      - name: Build Jellyfin plugin
         id: jprm
+        uses: oddstr13/jellyfin-plugin-repository-manager@4a2b165a3dc2cfc392db865a85f23c02e9f78c68
         with:
           dotnet-target: net9.0
 
       - name: Validate release version and artifact
         if: ${{ github.event_name == 'release' }}
+        shell: bash
         run: |
+          set -euo pipefail
           tag_version="${GITHUB_REF_NAME#v}"
           artifact_path="${{ steps.jprm.outputs.artifact }}"
           artifact_name="$(basename "$artifact_path")"
 
-          build_version="$(grep '^version:' build.yaml | sed -E 's/version:[[:space:]]*"?([^\"]+)"?/\1/')"
-
-          manifest_version="$(python - <<'PY'
-import json
-with open('manifest.json', 'r', encoding='utf-8') as f:
-    data = json.load(f)
-print(data[0]['versions'][0]['version'])
-PY
-          )"
-
+          build_version="$(python3 -c "import re, pathlib; t=pathlib.Path('build.yaml').read_text(encoding='utf-8'); m=re.search(r'^version:\\s*\\\"?([^\\\"]+)\\\"?', t, re.M); print(m.group(1) if m else '')")"
+          manifest_version="$(python3 -c "import json, pathlib; d=json.loads(pathlib.Path('manifest.json').read_text(encoding='utf-8')); print(d[0]['versions'][0]['version'])")"
           expected_zip="mediatracker_${tag_version}.zip"
 
           echo "tag_version=$tag_version"
@@ -60,22 +53,11 @@ PY
           echo "manifest_version=$manifest_version"
           echo "artifact_name=$artifact_name"
 
-          if [ "$build_version" != "$tag_version" ]; then
-            echo "build.yaml version ($build_version) does not match tag version ($tag_version)"
-            exit 1
-          fi
+          [[ "$build_version" == "$tag_version" ]] || { echo "build.yaml version ($build_version) does not match tag ($tag_version)"; exit 1; }
+          [[ "$manifest_version" == "$tag_version" ]] || { echo "manifest.json version ($manifest_version) does not match tag ($tag_version)"; exit 1; }
+          [[ "$artifact_name" == "$expected_zip" ]] || { echo "artifact name ($artifact_name) does not match expected ($expected_zip)"; exit 1; }
 
-          if [ "$manifest_version" != "$tag_version" ]; then
-            echo "manifest.json version ($manifest_version) does not match tag version ($tag_version)"
-            exit 1
-          fi
-
-          if [ "$artifact_name" != "$expected_zip" ]; then
-            echo "artifact name ($artifact_name) does not match expected ($expected_zip)"
-            exit 1
-          fi
-
-      - name: Upload Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-artifact
@@ -83,25 +65,25 @@ PY
           if-no-files-found: error
           path: ${{ steps.jprm.outputs.artifact }}
 
-      - name: Upload to Release
+      - name: Upload to release
         id: release
         if: ${{ github.event_name == 'release' }}
-        uses: shogo82148/actions-upload-release-asset@b016af922a61601d647ff60226adadbe146b7651 # v1.6.4
+        uses: shogo82148/actions-upload-release-asset@b016af922a61601d647ff60226adadbe146b7651
         with:
           upload_url: ${{ github.event.release.upload_url }}
           overwrite: true
           asset_path: ${{ steps.jprm.outputs.artifact }}
-          
+
       - name: Update manifest
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            echo "Release event detected, adding plugin URL to manifest"
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "release" ]]; then
             jprm repo add --plugin-url "${{ steps.release.outputs.browser_download_url }}" ./manifest.json "${{ steps.jprm.outputs.artifact }}"
           else
-            echo "Non-release run, adding local artifact to manifest"
             jprm repo add ./manifest.json "${{ steps.jprm.outputs.artifact }}"
           fi
-      
+
       - name: Setup GPG keys for signed commits
         if: ${{ github.event_name == 'release' && env.GPG_PRIVATE_KEY != '' }}
         uses: crazy-max/ghaction-import-gpg@v4
@@ -109,10 +91,12 @@ PY
           gpg_private_key: ${{ env.GPG_PRIVATE_KEY }}
           git_user_signingkey: true
           git_commit_gpgsign: true
-          
+
       - name: Commit manifest
         if: ${{ github.event_name == 'release' }}
+        shell: bash
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ./manifest.json
