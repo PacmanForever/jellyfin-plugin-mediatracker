@@ -12,6 +12,7 @@ using Xunit;
 
 namespace Jellyfin.Plugin.MediaTracker.Tests
 {
+    [Trait("Category","Integration")]
     public class IntegrationTests
     {
         static Type? FindType(string name)

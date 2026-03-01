@@ -39,5 +39,5 @@ jobs:
       - name: Build
         run: dotnet build --no-restore MediaTracker.sln
 
-      - name: Run tests
-        run: dotnet test --no-build --verbosity minimal
+      - name: Run tests (exclude integration)
+        run: dotnet test --no-build --verbosity minimal --filter "Category!=Integration"

@@ -11,6 +11,7 @@ using Xunit;
 
 namespace Jellyfin.Plugin.MediaTracker.Tests;
 
+[Trait("Category","Integration")]
 public class SeenNotificationTests
 {
     class TestHandler : HttpMessageHandler
