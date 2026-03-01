@@ -51,7 +51,13 @@ jobs:
           
       - name: Update manifest
         run: |
-          jprm repo add --plugin-url ${{ steps.release.outputs.browser_download_url }} ./manifest.json ${{ steps.jprm.outputs.artifact }}
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "Release event detected, adding plugin URL to manifest"
+            jprm repo add --plugin-url "${{ steps.release.outputs.browser_download_url }}" ./manifest.json "${{ steps.jprm.outputs.artifact }}"
+          else
+            echo "Non-release run, adding local artifact to manifest"
+            jprm repo add ./manifest.json "${{ steps.jprm.outputs.artifact }}"
+          fi
       
       - name: Setup GPG keys for signed commits
         uses: crazy-max/ghaction-import-gpg@v4
