@@ -3,6 +3,7 @@ namespace Jellyfin.Plugin.MediaTracker;
 using System;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities.Movies;
@@ -318,10 +319,27 @@ public class ServerEntryPoint : IHostedService, IDisposable
     {
         var mediaTrackerUrl = Plugin.Instance?.PluginConfiguration?.mediaTrackerUrl;
 
-        if (mediaTrackerUrl == null)
+        if (string.IsNullOrWhiteSpace(mediaTrackerUrl))
         {
             logger.LogError("Missing MediaTracker url");
             return;
+        }
+
+        if (!Uri.TryCreate(mediaTrackerUrl, UriKind.Absolute, out var baseUri))
+        {
+            logger.LogError("Invalid MediaTracker url: {0}", mediaTrackerUrl);
+            return;
+        }
+
+        if (!string.Equals(baseUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!IsLocalhostUri(baseUri))
+            {
+                logger.LogError("Insecure MediaTracker url is not allowed for non-localhost: {0}", mediaTrackerUrl);
+                return;
+            }
+
+            logger.LogWarning("Using insecure MediaTracker url over HTTP for localhost: {0}", mediaTrackerUrl);
         }
 
         var apiToken = Plugin.Instance?.PluginConfiguration?.GetApiToken((Guid)user.Id);
@@ -337,11 +355,18 @@ public class ServerEntryPoint : IHostedService, IDisposable
 
         var content = new StringContent(payloadJson, System.Text.Encoding.UTF8, "application/json");
 
-        var uri = new Uri(new Uri(mediaTrackerUrl), path + "?token=" + apiToken);
+        var uri = new Uri(baseUri, path);
 
         try
         {
-            var response = await httpClientFactory.CreateClient().PutAsync(uri, content);
+            var request = new HttpRequestMessage(HttpMethod.Put, uri)
+            {
+                Content = content
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiToken);
+            request.Headers.TryAddWithoutValidation("X-Api-Token", apiToken);
+
+            var response = await httpClientFactory.CreateClient().SendAsync(request);
             var responseText = await response.Content.ReadAsStringAsync();
 
             if (response.StatusCode != System.Net.HttpStatusCode.OK)
@@ -354,5 +379,12 @@ public class ServerEntryPoint : IHostedService, IDisposable
         {
             logger.LogError("Unexpected error: {0}", exception.Message);
         }
+    }
+
+    private static bool IsLocalhostUri(Uri uri)
+    {
+        return string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(uri.Host, "::1", StringComparison.OrdinalIgnoreCase);
     }
 }

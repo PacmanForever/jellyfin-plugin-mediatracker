@@ -63,7 +63,7 @@ public class SeenNotificationTests
             usersPropRuntime.SetValue(configObj, arr);
         }
         var urlProp = confProp.PropertyType.GetProperty("mediaTrackerUrl") ?? confProp.PropertyType.GetProperty("MediaTrackerUrl");
-        urlProp?.SetValue(configObj, "http://example.local/");
+        urlProp?.SetValue(configObj, "https://example.local/");
         confProp.SetValue(plugin, configObj);
 
         // create server
@@ -87,6 +87,9 @@ public class SeenNotificationTests
 
         Assert.NotNull(handler.LastRequest);
         Assert.Contains("/api/seen/by-external-id", handler.LastRequest.RequestUri.ToString());
+        Assert.DoesNotContain("token=", handler.LastRequest.RequestUri.Query);
+        Assert.Equal("Bearer", handler.LastRequest.Headers.Authorization?.Scheme);
+        Assert.True(handler.LastRequest.Headers.Contains("X-Api-Token"));
         var content = await handler.LastRequest.Content.ReadAsStringAsync();
         Assert.Contains("tt123", content);
     }
@@ -129,7 +132,7 @@ public class SeenNotificationTests
             usersPropRuntime.SetValue(configObj, arr);
         }
         var urlProp = confProp.PropertyType.GetProperty("mediaTrackerUrl") ?? confProp.PropertyType.GetProperty("MediaTrackerUrl");
-        urlProp?.SetValue(configObj, "http://example.local/");
+        urlProp?.SetValue(configObj, "https://example.local/");
         confProp.SetValue(plugin, configObj);
 
         var server = new Jellyfin.Plugin.MediaTracker.ServerEntryPoint(sessionManager, httpFactory.Object, loggerFactory, userManager, userDataManager);
@@ -151,6 +154,9 @@ public class SeenNotificationTests
 
         Assert.NotNull(handler.LastRequest);
         Assert.Contains("/api/seen/by-external-id", handler.LastRequest.RequestUri.ToString());
+        Assert.DoesNotContain("token=", handler.LastRequest.RequestUri.Query);
+        Assert.Equal("Bearer", handler.LastRequest.Headers.Authorization?.Scheme);
+        Assert.True(handler.LastRequest.Headers.Contains("X-Api-Token"));
         var content = await handler.LastRequest.Content.ReadAsStringAsync();
         Assert.Contains("tt999", content);
     }
