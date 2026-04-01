@@ -2,24 +2,14 @@ name: Compatibility check
 
 on:
   schedule:
-    # run every hour and let the job filter to 06:00 Europe/Madrid
-    - cron: '0 * * * *'
+    # run once per day at 04:00 UTC (06:00 Europe/Madrid during CEST, 05:00 during CET)
+    - cron: '0 4 * * *'
   workflow_dispatch: {}
 
 jobs:
   compatibility:
     runs-on: ubuntu-latest
     steps:
-      - name: Check local hour (Europe/Madrid)
-        id: tzcheck
-        run: |
-          HOUR=$(TZ=Europe/Madrid date +"%H")
-          echo "Europe/Madrid hour: $HOUR"
-          if [ "$HOUR" != "06" ]; then
-            echo "Not 06:00 Europe/Madrid — skipping job." 
-            exit 0
-          fi
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -32,6 +22,8 @@ jobs:
         run: |
           dotnet add Jellyfin.Plugin.MediaTracker/Jellyfin.Plugin.MediaTracker.csproj package Jellyfin.Controller --prerelease || true
           dotnet add Jellyfin.Plugin.MediaTracker/Jellyfin.Plugin.MediaTracker.csproj package Jellyfin.Model --prerelease || true
+          dotnet add Jellyfin.Plugin.MediaTracker.Tests/Jellyfin.Plugin.MediaTracker.Tests.csproj package Jellyfin.Controller --prerelease || true
+          dotnet add Jellyfin.Plugin.MediaTracker.Tests/Jellyfin.Plugin.MediaTracker.Tests.csproj package Jellyfin.Model --prerelease || true
 
       - name: Restore
         run: dotnet restore
