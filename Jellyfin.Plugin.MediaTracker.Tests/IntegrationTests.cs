@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Net;
 using System.Net.Http;
 using System.Linq;
@@ -15,7 +16,10 @@ namespace Jellyfin.Plugin.MediaTracker.Tests
     [Trait("Category","Integration")]
     public class IntegrationTests
     {
-        static Type? FindType(string name)
+        private static T RequireNotNull<T>(T? value, string message) where T : class
+            => value ?? throw new InvalidOperationException(message);
+
+        private static Type? FindType(string name)
         {
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
@@ -57,9 +61,125 @@ namespace Jellyfin.Plugin.MediaTracker.Tests
             return null;
         }
 
+        private static Type RequireType(params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var type = FindType(name) ?? Type.GetType(name, throwOnError: false, ignoreCase: false);
+                if (type != null)
+                {
+                    return type;
+                }
+            }
+
+            throw new InvalidOperationException($"Could not find any of these types: {string.Join(", ", names)}");
+        }
+
+        private static object CreateInstance(Type type, bool nonPublic = false)
+            => Activator.CreateInstance(type, nonPublic)
+                ?? throw new InvalidOperationException($"Could not create instance of {type.FullName}");
+
+        private static PropertyInfo? FindProperty(Type type, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var property = type.GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                if (property != null)
+                {
+                    return property;
+                }
+            }
+
+            return null;
+        }
+
+        private static PropertyInfo RequireProperty(Type type, params string[] names)
+            => FindProperty(type, names)
+                ?? throw new InvalidOperationException($"Property not found on {type.FullName}: {string.Join(", ", names)}");
+
+        private static MethodInfo RequireMethod(Type type, string name)
+            => type.GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                ?? throw new InvalidOperationException($"Method not found on {type.FullName}: {name}");
+
+        private static Jellyfin.Plugin.MediaTracker.Plugin CreateConfiguredPlugin(Guid guid)
+        {
+            var appPathsMock = new Mock<MediaBrowser.Common.Configuration.IApplicationPaths>();
+            appPathsMock.SetupGet(x => x.PluginConfigurationsPath).Returns("/tmp");
+            appPathsMock.SetupGet(x => x.PluginsPath).Returns("/tmp/plugins");
+            appPathsMock.SetupGet(x => x.ProgramDataPath).Returns("/tmp/data");
+
+            var xmlSerializerMock = new Mock<MediaBrowser.Model.Serialization.IXmlSerializer>();
+            var plugin = new Jellyfin.Plugin.MediaTracker.Plugin(appPathsMock.Object, xmlSerializerMock.Object);
+
+            var configurationProperty = RequireProperty(typeof(Jellyfin.Plugin.MediaTracker.Plugin), "Configuration");
+            var configObject = CreateInstance(configurationProperty.PropertyType);
+            var usersProperty = FindProperty(configurationProperty.PropertyType, "users");
+            if (usersProperty != null)
+            {
+                var elementType = usersProperty.PropertyType.IsArray
+                    ? usersProperty.PropertyType.GetElementType()
+                    : usersProperty.PropertyType.GetGenericArguments().FirstOrDefault();
+
+                if (elementType != null)
+                {
+                    var users = Array.CreateInstance(elementType, 1);
+                    var configuredUser = CreateInstance(elementType, true);
+                    FindProperty(elementType, "id", "Id")?.SetValue(configuredUser, guid.ToString());
+                    FindProperty(elementType, "apiToken", "ApiToken")?.SetValue(configuredUser, "apitoken123");
+                    users.SetValue(configuredUser, 0);
+                    usersProperty.SetValue(configObject, users);
+                }
+            }
+
+            FindProperty(configurationProperty.PropertyType, "mediaTrackerUrl", "MediaTrackerUrl")?.SetValue(configObject, "http://example.local/");
+            configurationProperty.SetValue(plugin, configObject);
+            return plugin;
+        }
+
+        private static Type FindUserType()
+        {
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    var candidate = asm.GetTypes().FirstOrDefault(t =>
+                        t.Name == "User"
+                        && t.FullName?.StartsWith("Jellyfin.Plugin.MediaTracker", StringComparison.Ordinal) != true
+                        && (t.Namespace?.Contains("MediaBrowser") == true || t.Namespace?.Contains("Jellyfin") == true));
+
+                    if (candidate != null)
+                    {
+                        return candidate;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            return RequireType("User");
+        }
+
+        private static object CreateConfiguredUser(Type userType, Guid guid)
+        {
+            var user = CreateInstance(userType);
+            FindProperty(userType, "Id")?.SetValue(user, guid);
+            FindProperty(userType, "Username", "Name")?.SetValue(user, "testuser");
+            return user;
+        }
+
+        private static object CreateTypedList(Type elementType, object item)
+        {
+            var listType = typeof(System.Collections.Generic.List<>).MakeGenericType(elementType);
+            var list = CreateInstance(listType);
+            RequireMethod(listType, "Add").Invoke(list, new[] { item });
+            return list;
+        }
+
         class TestHandler : HttpMessageHandler
         {
             public HttpRequestMessage? LastRequest { get; private set; }
+
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
             {
                 LastRequest = request;
@@ -81,94 +201,38 @@ namespace Jellyfin.Plugin.MediaTracker.Tests
 
             var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole().SetMinimumLevel(LogLevel.Debug));
 
-            var userManager = new Mock<MediaBrowser.Controller.Library.IUserManager>().Object;
+            var userManager = new Mock<IUserManager>().Object;
             var userDataManager = new Mock<MediaBrowser.Controller.Library.IUserDataManager>().Object;
 
-            // Create Plugin instance and set configuration via reflection
-            var appPathsMock = new Mock<MediaBrowser.Common.Configuration.IApplicationPaths>();
-            appPathsMock.SetupGet(x => x.PluginConfigurationsPath).Returns("/tmp");
-            appPathsMock.SetupGet(x => x.PluginsPath).Returns("/tmp/plugins");
-            appPathsMock.SetupGet(x => x.ProgramDataPath).Returns("/tmp/data");
-            var xmlSerializerMock = new Mock<MediaBrowser.Model.Serialization.IXmlSerializer>();
-            var plugin = new Jellyfin.Plugin.MediaTracker.Plugin(appPathsMock.Object, xmlSerializerMock.Object);
             var guid = Guid.NewGuid();
-            // build configuration instance compatible with runtime Property type
-            var confProp = typeof(Jellyfin.Plugin.MediaTracker.Plugin).GetProperty("Configuration", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-            var configObj = Activator.CreateInstance(confProp.PropertyType);
-            var usersPropRuntime = confProp.PropertyType.GetProperty("users");
-            if (usersPropRuntime != null)
-            {
-                var elemType = usersPropRuntime.PropertyType.IsArray ? usersPropRuntime.PropertyType.GetElementType() : usersPropRuntime.PropertyType.GetGenericArguments().FirstOrDefault();
-                if (elemType != null)
-                {
-                    var arr = Array.CreateInstance(elemType, 1);
-                    var userInstanceRuntime = Activator.CreateInstance(elemType);
-                    var idPropRt = elemType.GetProperty("id") ?? elemType.GetProperty("Id");
-                    var apiPropRt = elemType.GetProperty("apiToken") ?? elemType.GetProperty("ApiToken");
-                    idPropRt?.SetValue(userInstanceRuntime, guid.ToString());
-                    apiPropRt?.SetValue(userInstanceRuntime, "apitoken123");
-                    arr.SetValue(userInstanceRuntime, 0);
-                    usersPropRuntime.SetValue(configObj, arr);
-                }
-            }
-            var urlProp = confProp.PropertyType.GetProperty("mediaTrackerUrl") ?? confProp.PropertyType.GetProperty("MediaTrackerUrl");
-            urlProp?.SetValue(configObj, "http://example.local/");
-            confProp.SetValue(plugin, configObj);
+            _ = CreateConfiguredPlugin(guid);
 
             // Create ServerEntryPoint
             var server = new Jellyfin.Plugin.MediaTracker.ServerEntryPoint(sessionMock.Object, httpFactoryMock.Object, loggerFactory, userManager, userDataManager);
 
             // Build a PlaybackProgressEventArgs instance via reflection
-            var tPlaybackArgs = FindType("MediaBrowser.Controller.Library.PlaybackProgressEventArgs") ?? FindType("PlaybackProgressEventArgs");
-            Assert.NotNull(tPlaybackArgs);
-            var playbackArgs = Activator.CreateInstance(tPlaybackArgs!);
+            var tPlaybackArgs = RequireType("MediaBrowser.Controller.Library.PlaybackProgressEventArgs", "PlaybackProgressEventArgs");
+            var playbackArgs = CreateInstance(tPlaybackArgs);
 
             // Set minimal properties via reflection
-            Type? userType = null;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var candidate = asm.GetTypes().FirstOrDefault(t => t.Name == "User" && !t.FullName.StartsWith("Jellyfin.Plugin.MediaTracker", StringComparison.Ordinal));
-                    if (candidate != null && (candidate.Namespace?.Contains("MediaBrowser") == true || candidate.Namespace?.Contains("Jellyfin") == true))
-                    {
-                        userType = candidate;
-                        break;
-                    }
-                }
-                catch { }
-            }
-            userType ??= FindType("User");
-            Assert.NotNull(userType);
-            var userInstance = Activator.CreateInstance(userType);
-            var idProp = userType.GetProperty("Id");
-            if (idProp != null) idProp.SetValue(userInstance, guid);
-            var usernameProp = userType.GetProperty("Username") ?? userType.GetProperty("Name");
-            if (usernameProp != null) usernameProp.SetValue(userInstance, "testuser");
+            var userType = FindUserType();
+            var userInstance = CreateConfiguredUser(userType, guid);
+            var usersList = CreateTypedList(userType, userInstance);
 
-            var listType = typeof(System.Collections.Generic.List<>).MakeGenericType(userType);
-            var usersList = Activator.CreateInstance(listType);
-            var addMethod = listType.GetMethod("Add");
-            addMethod.Invoke(usersList, new[] { userInstance });
+            FindProperty(tPlaybackArgs, "Users", "UserIds")?.SetValue(playbackArgs, usersList);
 
-            var usersProp = tPlaybackArgs.GetProperty("Users") ?? tPlaybackArgs.GetProperty("UserIds");
-            if (usersProp != null) usersProp.SetValue(playbackArgs, usersList);
+            var movieType = RequireType("MediaBrowser.Controller.Entities.Movie", "MediaBrowser.Model.Entities.Movie", "Movie");
+            var movie = CreateInstance(movieType);
+            FindProperty(movieType, "Name")?.SetValue(movie, "Test Movie");
+            FindProperty(movieType, "RunTimeTicks")?.SetValue(movie, (long)TimeSpan.FromMinutes(10).Ticks);
 
-            var movieType = FindType("MediaBrowser.Controller.Entities.Movie") ?? FindType("MediaBrowser.Model.Entities.Movie") ?? FindType("Movie");
-            Assert.NotNull(movieType);
-            var movie = Activator.CreateInstance(movieType);
-            var nameProp = movieType.GetProperty("Name");
-            nameProp?.SetValue(movie, "Test Movie");
-            var runTimeProp = movieType.GetProperty("RunTimeTicks");
-            runTimeProp?.SetValue(movie, (long)TimeSpan.FromMinutes(10).Ticks);
-
-            var itemProp = tPlaybackArgs.GetProperty("Item");
+            var itemProp = RequireProperty(tPlaybackArgs, "Item");
             itemProp.SetValue(playbackArgs, movie);
 
-            var posProp = tPlaybackArgs.GetProperty("PlaybackPositionTicks");
+            var posProp = RequireProperty(tPlaybackArgs, "PlaybackPositionTicks");
             posProp.SetValue(playbackArgs, (long)TimeSpan.FromMinutes(9).Ticks);
 
-            var deviceProp = tPlaybackArgs.GetProperty("DeviceName");
+            var deviceProp = RequireProperty(tPlaybackArgs, "DeviceName");
             deviceProp.SetValue(playbackArgs, "TestDevice");
 
             // Act: raise event
@@ -178,9 +242,11 @@ namespace Jellyfin.Plugin.MediaTracker.Tests
             await Task.Delay(200);
 
             // Assert: handler received a PUT request
-            Assert.NotNull(handler.LastRequest);
-            Assert.Contains("/api/progress/by-external-id", handler.LastRequest.RequestUri.ToString());
-            var content = await handler.LastRequest.Content.ReadAsStringAsync();
+            var lastRequest = RequireNotNull(handler.LastRequest, "Expected HTTP request was not sent.");
+            var requestUri = RequireNotNull(lastRequest.RequestUri, "Expected request URI was not set.");
+            var requestContent = RequireNotNull(lastRequest.Content, "Expected request content was not set.");
+            Assert.Contains("/api/progress/by-external-id", requestUri.ToString());
+            var content = await requestContent.ReadAsStringAsync();
             Assert.Contains("Test Movie", content);
         }
 
@@ -197,91 +263,36 @@ namespace Jellyfin.Plugin.MediaTracker.Tests
 
             var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole().SetMinimumLevel(LogLevel.Debug));
 
-            var userManager = new Mock<MediaBrowser.Controller.Library.IUserManager>().Object;
+            var userManager = new Mock<IUserManager>().Object;
             var userDataManager = new Mock<MediaBrowser.Controller.Library.IUserDataManager>().Object;
 
-            var appPathsMock = new Mock<MediaBrowser.Common.Configuration.IApplicationPaths>();
-            appPathsMock.SetupGet(x => x.PluginConfigurationsPath).Returns("/tmp");
-            appPathsMock.SetupGet(x => x.PluginsPath).Returns("/tmp/plugins");
-            appPathsMock.SetupGet(x => x.ProgramDataPath).Returns("/tmp/data");
-            var xmlSerializerMock = new Mock<MediaBrowser.Model.Serialization.IXmlSerializer>();
-            var plugin = new Jellyfin.Plugin.MediaTracker.Plugin(appPathsMock.Object, xmlSerializerMock.Object);
             var guid = Guid.NewGuid();
-            var confProp = typeof(Jellyfin.Plugin.MediaTracker.Plugin).GetProperty("Configuration", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-            var configObj = Activator.CreateInstance(confProp.PropertyType);
-            var usersPropRuntime = confProp.PropertyType.GetProperty("users");
-            if (usersPropRuntime != null)
-            {
-                var elemType = usersPropRuntime.PropertyType.IsArray ? usersPropRuntime.PropertyType.GetElementType() : usersPropRuntime.PropertyType.GetGenericArguments().FirstOrDefault();
-                if (elemType != null)
-                {
-                    var arr = Array.CreateInstance(elemType, 1);
-                    var userInstanceRuntime = Activator.CreateInstance(elemType);
-                    var idPropRt = elemType.GetProperty("id") ?? elemType.GetProperty("Id");
-                    var apiPropRt = elemType.GetProperty("apiToken") ?? elemType.GetProperty("ApiToken");
-                    idPropRt?.SetValue(userInstanceRuntime, guid.ToString());
-                    apiPropRt?.SetValue(userInstanceRuntime, "apitoken123");
-                    arr.SetValue(userInstanceRuntime, 0);
-                    usersPropRuntime.SetValue(configObj, arr);
-                }
-            }
-            var urlProp = confProp.PropertyType.GetProperty("mediaTrackerUrl") ?? confProp.PropertyType.GetProperty("MediaTrackerUrl");
-            urlProp?.SetValue(configObj, "http://example.local/");
-            confProp.SetValue(plugin, configObj);
+            _ = CreateConfiguredPlugin(guid);
 
             var server = new Jellyfin.Plugin.MediaTracker.ServerEntryPoint(sessionMock.Object, httpFactoryMock.Object, loggerFactory, userManager, userDataManager);
 
-            var tPlaybackArgs = FindType("MediaBrowser.Controller.Library.PlaybackProgressEventArgs") ?? FindType("PlaybackProgressEventArgs");
-            Assert.NotNull(tPlaybackArgs);
-            var playbackArgs = Activator.CreateInstance(tPlaybackArgs!);
+            var tPlaybackArgs = RequireType("MediaBrowser.Controller.Library.PlaybackProgressEventArgs", "PlaybackProgressEventArgs");
+            var playbackArgs = CreateInstance(tPlaybackArgs);
 
-            Type? userType = null;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var candidate = asm.GetTypes().FirstOrDefault(t => t.Name == "User" && !t.FullName.StartsWith("Jellyfin.Plugin.MediaTracker", StringComparison.Ordinal));
-                    if (candidate != null && (candidate.Namespace?.Contains("MediaBrowser") == true || candidate.Namespace?.Contains("Jellyfin") == true))
-                    {
-                        userType = candidate;
-                        break;
-                    }
-                }
-                catch { }
-            }
-            userType ??= FindType("User");
-            Assert.NotNull(userType);
-            var userInstance = Activator.CreateInstance(userType);
-            var idProp = userType.GetProperty("Id");
-            if (idProp != null) idProp.SetValue(userInstance, guid);
-            var usernameProp = userType.GetProperty("Username") ?? userType.GetProperty("Name");
-            if (usernameProp != null) usernameProp.SetValue(userInstance, "testuser");
+            var userType = FindUserType();
+            var userInstance = CreateConfiguredUser(userType, guid);
+            var usersList = CreateTypedList(userType, userInstance);
+            FindProperty(tPlaybackArgs, "Users", "UserIds")?.SetValue(playbackArgs, usersList);
 
-            var listType = typeof(System.Collections.Generic.List<>).MakeGenericType(userType);
-            var usersList = Activator.CreateInstance(listType);
-            var addMethod = listType.GetMethod("Add");
-            addMethod.Invoke(usersList, new[] { userInstance });
-            var usersProp = tPlaybackArgs.GetProperty("Users") ?? tPlaybackArgs.GetProperty("UserIds");
-            if (usersProp != null) usersProp.SetValue(playbackArgs, usersList);
+            var movieType = RequireType("MediaBrowser.Controller.Entities.Movie", "MediaBrowser.Model.Entities.Movie", "Movie");
+            var movie = CreateInstance(movieType);
+            FindProperty(movieType, "Name")?.SetValue(movie, "Seen Movie");
+            FindProperty(movieType, "Id")?.SetValue(movie, Guid.NewGuid());
+            FindProperty(movieType, "RunTimeTicks")?.SetValue(movie, (long)TimeSpan.FromMinutes(10).Ticks);
 
-            var movieType = FindType("MediaBrowser.Controller.Entities.Movie") ?? FindType("MediaBrowser.Model.Entities.Movie") ?? FindType("Movie");
-            Assert.NotNull(movieType);
-            var movie = Activator.CreateInstance(movieType);
-            var nameProp = movieType.GetProperty("Name");
-            nameProp?.SetValue(movie, "Seen Movie");
-            var idMovieProp = movieType.GetProperty("Id");
-            if (idMovieProp != null) idMovieProp.SetValue(movie, Guid.NewGuid());
-            var runTimeProp = movieType.GetProperty("RunTimeTicks");
-            runTimeProp?.SetValue(movie, (long)TimeSpan.FromMinutes(10).Ticks);
-
-            var itemProp = tPlaybackArgs.GetProperty("Item");
+            var itemProp = RequireProperty(tPlaybackArgs, "Item");
             itemProp.SetValue(playbackArgs, movie);
 
-            var posProp = tPlaybackArgs.GetProperty("PlaybackPositionTicks");
+            var posProp = RequireProperty(tPlaybackArgs, "PlaybackPositionTicks");
             // set to 95% of runtime
             posProp.SetValue(playbackArgs, (long)TimeSpan.FromMinutes(9.5).Ticks);
 
-            var deviceProp = tPlaybackArgs.GetProperty("DeviceName");
+            var deviceProp = RequireProperty(tPlaybackArgs, "DeviceName");
             deviceProp.SetValue(playbackArgs, "DeviceSeen");
 
             // Act
@@ -289,9 +300,11 @@ namespace Jellyfin.Plugin.MediaTracker.Tests
             await Task.Delay(200);
 
             // Assert last call is seen
-            Assert.NotNull(handler.LastRequest);
-            Assert.Contains("/api/seen/by-external-id", handler.LastRequest.RequestUri.ToString());
-            var content = await handler.LastRequest.Content.ReadAsStringAsync();
+            var lastRequest = RequireNotNull(handler.LastRequest, "Expected HTTP request was not sent.");
+            var requestUri = RequireNotNull(lastRequest.RequestUri, "Expected request URI was not set.");
+            var requestContent = RequireNotNull(lastRequest.Content, "Expected request content was not set.");
+            Assert.Contains("/api/seen/by-external-id", requestUri.ToString());
+            var content = await requestContent.ReadAsStringAsync();
             Assert.Contains("Seen Movie", content);
         }
 
@@ -307,115 +320,63 @@ namespace Jellyfin.Plugin.MediaTracker.Tests
 
             var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole().SetMinimumLevel(LogLevel.Debug));
 
-            var userManager = new Mock<MediaBrowser.Controller.Library.IUserManager>().Object;
+            var userManager = new Mock<IUserManager>().Object;
             var userDataManager = new Mock<MediaBrowser.Controller.Library.IUserDataManager>().Object;
 
-            var appPathsMock = new Mock<MediaBrowser.Common.Configuration.IApplicationPaths>();
-            appPathsMock.SetupGet(x => x.PluginConfigurationsPath).Returns("/tmp");
-            appPathsMock.SetupGet(x => x.PluginsPath).Returns("/tmp/plugins");
-            appPathsMock.SetupGet(x => x.ProgramDataPath).Returns("/tmp/data");
-            var xmlSerializerMock = new Mock<MediaBrowser.Model.Serialization.IXmlSerializer>();
-            var plugin = new Jellyfin.Plugin.MediaTracker.Plugin(appPathsMock.Object, xmlSerializerMock.Object);
             var guid = Guid.NewGuid();
-            var confProp = typeof(Jellyfin.Plugin.MediaTracker.Plugin).GetProperty("Configuration", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-            var configObj = Activator.CreateInstance(confProp.PropertyType);
-            var usersPropRuntime = confProp.PropertyType.GetProperty("users");
-            if (usersPropRuntime != null)
-            {
-                var elemType = usersPropRuntime.PropertyType.IsArray ? usersPropRuntime.PropertyType.GetElementType() : usersPropRuntime.PropertyType.GetGenericArguments().FirstOrDefault();
-                if (elemType != null)
-                {
-                    var arr = Array.CreateInstance(elemType, 1);
-                    var userInstanceRuntime = Activator.CreateInstance(elemType);
-                    var idPropRt = elemType.GetProperty("id") ?? elemType.GetProperty("Id");
-                    var apiPropRt = elemType.GetProperty("apiToken") ?? elemType.GetProperty("ApiToken");
-                    idPropRt?.SetValue(userInstanceRuntime, guid.ToString());
-                    apiPropRt?.SetValue(userInstanceRuntime, "apitoken123");
-                    arr.SetValue(userInstanceRuntime, 0);
-                    usersPropRuntime.SetValue(configObj, arr);
-                }
-            }
-            var urlProp = confProp.PropertyType.GetProperty("mediaTrackerUrl") ?? confProp.PropertyType.GetProperty("MediaTrackerUrl");
-            urlProp?.SetValue(configObj, "http://example.local/");
-            confProp.SetValue(plugin, configObj);
+            _ = CreateConfiguredPlugin(guid);
 
             var server = new Jellyfin.Plugin.MediaTracker.ServerEntryPoint(sessionMock.Object, httpFactoryMock.Object, loggerFactory, userManager, userDataManager);
 
-            var tPlaybackArgs = FindType("MediaBrowser.Controller.Library.PlaybackProgressEventArgs") ?? FindType("PlaybackProgressEventArgs");
-            Assert.NotNull(tPlaybackArgs);
-            var playbackArgs = Activator.CreateInstance(tPlaybackArgs!);
+            var tPlaybackArgs = RequireType("MediaBrowser.Controller.Library.PlaybackProgressEventArgs", "PlaybackProgressEventArgs");
+            var playbackArgs = CreateInstance(tPlaybackArgs);
 
-            Type? userType = null;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    var candidate = asm.GetTypes().FirstOrDefault(t => t.Name == "User" && !t.FullName.StartsWith("Jellyfin.Plugin.MediaTracker", StringComparison.Ordinal));
-                    if (candidate != null && (candidate.Namespace?.Contains("MediaBrowser") == true || candidate.Namespace?.Contains("Jellyfin") == true))
-                    {
-                        userType = candidate;
-                        break;
-                    }
-                }
-                catch { }
-            }
-            userType ??= FindType("User");
-            Assert.NotNull(userType);
-            var userInstance = Activator.CreateInstance(userType);
-            var idProp = userType.GetProperty("Id");
-            if (idProp != null) idProp.SetValue(userInstance, guid);
-            var usernameProp = userType.GetProperty("Username") ?? userType.GetProperty("Name");
-            if (usernameProp != null) usernameProp.SetValue(userInstance, "testuser");
+            var userType = FindUserType();
+            var userInstance = CreateConfiguredUser(userType, guid);
+            var usersList = CreateTypedList(userType, userInstance);
+            FindProperty(tPlaybackArgs, "Users", "UserIds")?.SetValue(playbackArgs, usersList);
 
-            var listType = typeof(System.Collections.Generic.List<>).MakeGenericType(userType);
-            var usersList = Activator.CreateInstance(listType);
-            var addMethod = listType.GetMethod("Add");
-            addMethod.Invoke(usersList, new[] { userInstance });
-            var usersProp = tPlaybackArgs.GetProperty("Users") ?? tPlaybackArgs.GetProperty("UserIds");
-            if (usersProp != null) usersProp.SetValue(playbackArgs, usersList);
-
-            var episodeType = FindType("MediaBrowser.Controller.Entities.TV.Episode") ?? FindType("MediaBrowser.Model.Entities.Episode") ?? FindType("Episode");
-            Assert.NotNull(episodeType);
-            var episode = Activator.CreateInstance(episodeType);
-            var episodeIdProp = episodeType.GetProperty("Id");
-            if (episodeIdProp != null) episodeIdProp.SetValue(episode, Guid.NewGuid());
-            var episodeIdxProp = episodeType.GetProperty("IndexNumber");
-            episodeIdxProp?.SetValue(episode, 1);
+            var episodeType = RequireType("MediaBrowser.Controller.Entities.TV.Episode", "MediaBrowser.Model.Entities.Episode", "Episode");
+            var episode = CreateInstance(episodeType);
+            FindProperty(episodeType, "Id")?.SetValue(episode, Guid.NewGuid());
+            FindProperty(episodeType, "IndexNumber")?.SetValue(episode, 1);
 
             // Series
-            var seriesType = Type.GetType("MediaBrowser.Controller.Entities.TV.Series, MediaBrowser.Controller") ?? Type.GetType("MediaBrowser.Model.Entities.Series, MediaBrowser.Model");
-            Assert.NotNull(seriesType);
-            var series = Activator.CreateInstance(seriesType);
+            var seriesType = RequireType("MediaBrowser.Controller.Entities.TV.Series", "MediaBrowser.Model.Entities.Series", "Series");
+            var series = CreateInstance(seriesType);
             // set provider ids dictionary
-            var provIdsProp = seriesType.GetProperty("ProviderIds");
+            var provIdsProp = FindProperty(seriesType, "ProviderIds");
             if (provIdsProp != null)
             {
                 var dictType = typeof(System.Collections.Generic.Dictionary<string, string>);
-                var dict = Activator.CreateInstance(dictType) as System.Collections.IDictionary;
+                var dict = CreateInstance(dictType) as IDictionary;
+                if (dict == null)
+                {
+                    throw new InvalidOperationException("Could not create provider id dictionary.");
+                }
+
                 dict["Imdb"] = "tt1234567";
                 provIdsProp.SetValue(series, dict);
             }
 
             // Season
-            var seasonType = Type.GetType("MediaBrowser.Controller.Entities.TV.Season, MediaBrowser.Controller") ?? Type.GetType("MediaBrowser.Model.Entities.Season, MediaBrowser.Model");
-            var season = Activator.CreateInstance(seasonType);
-            var seasonIdxProp = seasonType.GetProperty("IndexNumber");
-            seasonIdxProp?.SetValue(season, 1);
+            var seasonType = RequireType("MediaBrowser.Controller.Entities.TV.Season", "MediaBrowser.Model.Entities.Season", "Season");
+            var season = CreateInstance(seasonType);
+            FindProperty(seasonType, "IndexNumber")?.SetValue(season, 1);
 
             // attach series and season
-            var seriesProp = episodeType.GetProperty("Series");
+            var seriesProp = FindProperty(episodeType, "Series");
             seriesProp?.SetValue(episode, series);
-            var seasonProp = episodeType.GetProperty("Season");
+            var seasonProp = FindProperty(episodeType, "Season");
             seasonProp?.SetValue(episode, season);
 
             // assign Item
-            var itemProp = tPlaybackArgs.GetProperty("Item");
+            var itemProp = RequireProperty(tPlaybackArgs, "Item");
             itemProp.SetValue(playbackArgs, episode);
 
             // runtime and position
-            var runTimeProp = episodeType.GetProperty("RunTimeTicks");
-            runTimeProp?.SetValue(episode, (long)TimeSpan.FromMinutes(20).Ticks);
-            var posProp = tPlaybackArgs.GetProperty("PlaybackPositionTicks");
+            FindProperty(episodeType, "RunTimeTicks")?.SetValue(episode, (long)TimeSpan.FromMinutes(20).Ticks);
+            var posProp = RequireProperty(tPlaybackArgs, "PlaybackPositionTicks");
             posProp.SetValue(playbackArgs, (long)TimeSpan.FromMinutes(19).Ticks);
 
             // Act
@@ -423,9 +384,11 @@ namespace Jellyfin.Plugin.MediaTracker.Tests
             await Task.Delay(200);
 
             // Assert
-            Assert.NotNull(handler.LastRequest);
-            Assert.Contains("/api/seen/by-external-id", handler.LastRequest.RequestUri.ToString());
-            var content = await handler.LastRequest.Content.ReadAsStringAsync();
+            var lastRequest = RequireNotNull(handler.LastRequest, "Expected HTTP request was not sent.");
+            var requestUri = RequireNotNull(lastRequest.RequestUri, "Expected request URI was not set.");
+            var requestContent = RequireNotNull(lastRequest.Content, "Expected request content was not set.");
+            Assert.Contains("/api/seen/by-external-id", requestUri.ToString());
+            var content = await requestContent.ReadAsStringAsync();
             Assert.Contains("tt1234567", content);
         }
     }

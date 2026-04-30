@@ -7,7 +7,7 @@ namespace Jellyfin.Plugin.MediaTracker.Tests;
 
 public class CompatibilityTests
 {
-    static Type FindType(string name)
+    static Type? FindType(string name)
     {
         // Search loaded assemblies first by full name or simple name
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
