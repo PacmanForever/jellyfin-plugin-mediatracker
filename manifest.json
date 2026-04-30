@@ -12,7 +12,7 @@
                 "changelog": "- \"Bump Jellyfin dependencies to 10.11.8\"",
                 "targetAbi": "10.9.1.0",
                 "sourceUrl": "https://raw.githubusercontent.com/PacmanForever/jellyfin-plugin-mediatracker/main/mediatracker/mediatracker_2.0.0.7.zip",
-                "checksum": "",
+                "checksum": "14a512e65a8a1dc561f93711910dde77",
                 "timestamp": "2026-05-01T18:00:00Z"
             },
             {
