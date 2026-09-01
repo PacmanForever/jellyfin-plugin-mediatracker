@@ -1,6 +1,13 @@
 name: Compatibility check
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/compatibility-check.yml
+      - Jellyfin.Plugin.MediaTracker/Jellyfin.Plugin.MediaTracker.csproj
+      - Jellyfin.Plugin.MediaTracker.Tests/Jellyfin.Plugin.MediaTracker.Tests.csproj
   schedule:
     # run once per day at 04:17 UTC (06:17 Europe/Madrid during CEST, 05:17 during CET)
     - cron: '17 4 * * *'
