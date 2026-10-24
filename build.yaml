@@ -1,7 +1,7 @@
 ---
 name: "MediaTracker"
 guid: "c4772eae-799e-490d-abff-4de21f99c95e"
-version: "2.0.0.9"
+version: "2.0.0.10"
 targetAbi: "12.2.0.0"
 framework: "net10.0"
 overview: "MediaTracker scrobbler"
@@ -11,4 +11,4 @@ owner: "bonukai"
 artifacts:
   - "Jellyfin.Plugin.MediaTracker.dll"
 changelog: |-
-  - "Add support for Jellyfin 12.2"
+  - "Harden playback reporting and plugin configuration"

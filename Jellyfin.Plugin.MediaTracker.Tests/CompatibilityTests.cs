@@ -1,6 +1,10 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.MediaTracker;
+using MediaBrowser.Controller.Entities.Movies;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaTracker.Tests;
@@ -79,5 +83,60 @@ public class CompatibilityTests
         var deviceName = t.GetProperty("DeviceName") ?? t.GetProperty("Device");
         var users = t.GetProperty("Users") ?? t.GetProperty("UserIds");
         if (deviceName == null || users == null) return;
+    }
+}
+
+public class PreviousActionsBehaviorTests
+{
+    public sealed class TestUser
+    {
+        public Guid Id { get; init; }
+    }
+
+    [Fact]
+    public void SignificantProgressChangesAreThrottledForThirtySeconds()
+    {
+        var previous = new PreviousAction("playing", 0.1f);
+
+        Assert.True(previous.ShouldSkip("playing", 0.2f));
+        Assert.False(previous.ShouldSkip("paused", 0.2f));
+    }
+
+    [Fact]
+    public void ConcurrentProgressEventsForSameItemOnlyStartOneRequest()
+    {
+        var actions = new PreviousActions();
+        var user = new TestUser { Id = Guid.NewGuid() };
+        var movie = new Movie { Id = Guid.NewGuid() };
+        var requestCount = 0;
+
+        Parallel.For(0, 128, _ =>
+        {
+            if (!actions.ShouldSkipAction(user, movie, 0.5f, "playing"))
+            {
+                Interlocked.Increment(ref requestCount);
+            }
+        });
+
+        Assert.Equal(1, requestCount);
+    }
+
+    [Fact]
+    public void ConcurrentSeenChecksForSameItemOnlyAllowOneNotification()
+    {
+        var actions = new PreviousActions();
+        var user = new TestUser { Id = Guid.NewGuid() };
+        var movie = new Movie { Id = Guid.NewGuid() };
+        var notificationCount = 0;
+
+        Parallel.For(0, 128, _ =>
+        {
+            if (actions.CanMarkAsSeen(user, movie))
+            {
+                Interlocked.Increment(ref notificationCount);
+            }
+        });
+
+        Assert.Equal(1, notificationCount);
     }
 }

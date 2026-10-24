@@ -3,8 +3,12 @@ using System.Dynamic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
+using System.Text;
 using System.Reflection;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.MediaTracker;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -42,12 +46,72 @@ public class SeenNotificationTests
     class TestHandler : HttpMessageHandler
     {
         public HttpRequestMessage? LastRequest { get; private set; }
+        public string? LastRequestContent { get; private set; }
+        public TrackingContent ResponseContent { get; } = new();
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
         {
             LastRequest = request;
-            var resp = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("OK") };
+            LastRequestContent = request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
+            var resp = new HttpResponseMessage(HttpStatusCode.OK) { Content = ResponseContent };
             return Task.FromResult(resp);
         }
+    }
+
+    class TrackingContent : HttpContent
+    {
+        public bool WasRead { get; private set; }
+
+        protected override async Task SerializeToStreamAsync(System.IO.Stream stream, System.Net.TransportContext? context)
+        {
+            WasRead = true;
+            await stream.WriteAsync(Encoding.UTF8.GetBytes("response body"));
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 13;
+            return true;
+        }
+    }
+
+    [Fact]
+    public async Task RegisteredMediaTrackerClientDoesNotFollowRedirects()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endpoint = (IPEndPoint)listener.LocalEndpoint;
+        using var cancellation = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var serverTask = Task.Run(async () =>
+        {
+            using var connection = await listener.AcceptTcpClientAsync(cancellation.Token);
+            var stream = connection.GetStream();
+            using var reader = new System.IO.StreamReader(stream, Encoding.ASCII, false, 1024, true);
+            string? line;
+            do
+            {
+                line = await reader.ReadLineAsync(cancellation.Token);
+            }
+            while (!string.IsNullOrEmpty(line));
+
+            var redirect = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/capture\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            await stream.WriteAsync(redirect, cancellation.Token);
+        }, cancellation.Token);
+
+        var services = new ServiceCollection();
+        new PluginServiceRegistrator().RegisterServices(services, null!);
+        using var provider = services.BuildServiceProvider();
+        var httpClient = provider.GetRequiredService<IHttpClientFactory>().CreateClient("MediaTracker");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{endpoint.Port}/redirect");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "test-token");
+        request.Headers.Add("X-Api-Token", "test-token");
+
+        using var response = await httpClient.SendAsync(request, cancellation.Token);
+        await serverTask.WaitAsync(cancellation.Token);
+
+        Assert.Equal(HttpStatusCode.Found, response.StatusCode);
     }
 
     [Fact]
@@ -115,13 +179,12 @@ public class SeenNotificationTests
 
         var lastRequest = RequireNotNull(handler.LastRequest, "Expected HTTP request was not sent.");
         var requestUri = RequireNotNull(lastRequest.RequestUri, "Expected request URI was not set.");
-        var requestContent = RequireNotNull(lastRequest.Content, "Expected request content was not set.");
         Assert.Contains("/api/seen/by-external-id", requestUri.ToString());
         Assert.DoesNotContain("token=", requestUri.Query);
         Assert.Equal("Bearer", lastRequest.Headers.Authorization?.Scheme);
         Assert.True(lastRequest.Headers.Contains("X-Api-Token"));
-        var content = await requestContent.ReadAsStringAsync();
-        Assert.Contains("tt123", content);
+        Assert.Contains("tt123", handler.LastRequestContent);
+        Assert.False(handler.ResponseContent.WasRead);
     }
 
     [Fact]
@@ -187,12 +250,11 @@ public class SeenNotificationTests
 
         var lastRequest = RequireNotNull(handler.LastRequest, "Expected HTTP request was not sent.");
         var requestUri = RequireNotNull(lastRequest.RequestUri, "Expected request URI was not set.");
-        var requestContent = RequireNotNull(lastRequest.Content, "Expected request content was not set.");
         Assert.Contains("/api/seen/by-external-id", requestUri.ToString());
         Assert.DoesNotContain("token=", requestUri.Query);
         Assert.Equal("Bearer", lastRequest.Headers.Authorization?.Scheme);
         Assert.True(lastRequest.Headers.Contains("X-Api-Token"));
-        var content = await requestContent.ReadAsStringAsync();
-        Assert.Contains("tt999", content);
+        Assert.Contains("tt999", handler.LastRequestContent);
+        Assert.False(handler.ResponseContent.WasRead);
     }
 }

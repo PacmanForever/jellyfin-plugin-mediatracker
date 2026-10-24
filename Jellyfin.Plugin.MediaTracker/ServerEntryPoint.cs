@@ -101,7 +101,24 @@ public class ServerEntryPoint : IHostedService, IDisposable
         return null;
     }
 
-    private async void OnPlaybackChanged(PlaybackProgressEventArgs e, string action)
+    private void OnPlaybackChanged(PlaybackProgressEventArgs e, string action)
+    {
+        _ = OnPlaybackChangedAsync(e, action);
+    }
+
+    private async Task OnPlaybackChangedAsync(PlaybackProgressEventArgs e, string action)
+    {
+        try
+        {
+            await ProcessPlaybackChangedAsync(e, action);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Failed to process a Jellyfin playback event.");
+        }
+    }
+
+    private async Task ProcessPlaybackChangedAsync(PlaybackProgressEventArgs e, string action)
     {
         if (e.Users == null || e.Users.Count == 0)
         {
@@ -359,25 +376,26 @@ public class ServerEntryPoint : IHostedService, IDisposable
 
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Put, uri)
+            using var request = new HttpRequestMessage(HttpMethod.Put, uri)
             {
                 Content = content
             };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiToken);
             request.Headers.TryAddWithoutValidation("X-Api-Token", apiToken);
 
-            var response = await httpClientFactory.CreateClient().SendAsync(request);
-            var responseText = await response.Content.ReadAsStringAsync();
+            using var response = await httpClientFactory
+                .CreateClient(PluginServiceRegistrator.MediaTrackerHttpClientName)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
 
             if (response.StatusCode != System.Net.HttpStatusCode.OK)
             {
-                logger.LogError("MediaTracker error: {0}", responseText);
+                logger.LogError("MediaTracker returned HTTP status {StatusCode}.", response.StatusCode);
             }
 
         }
-        catch (System.Exception exception)
+        catch (Exception exception)
         {
-            logger.LogError("Unexpected error: {0}", exception.Message);
+            logger.LogError(exception, "Unexpected error while sending playback data to MediaTracker.");
         }
     }
 

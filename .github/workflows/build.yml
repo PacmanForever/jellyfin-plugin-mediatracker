@@ -1,6 +1,7 @@
 name: Publish Plugin
 
-permissions: write-all
+permissions:
+  contents: write
 
 on:
   release:
@@ -15,7 +16,6 @@ jobs:
       MSBUILDDISABLENODEREUSE: '1'
       DOTNET_MULTILEVEL_LOOKUP: '0'
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Setup jprm
-        run: pip install --user jprm
+        run: pip install --user jprm==1.1.0
 
       - name: Build Jellyfin plugin
         id: jprm
@@ -85,11 +85,22 @@ jobs:
             jprm repo add ./manifest.json "${{ steps.jprm.outputs.artifact }}"
           fi
 
+      - name: Check GPG signing key availability
+        id: signing
+        if: ${{ github.event_name == 'release' }}
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -n "$GPG_PRIVATE_KEY" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup GPG keys for signed commits
-        if: ${{ github.event_name == 'release' && env.GPG_PRIVATE_KEY != '' }}
-        uses: crazy-max/ghaction-import-gpg@v4
+        if: ${{ github.event_name == 'release' && steps.signing.outputs.available == 'true' }}
+        uses: crazy-max/ghaction-import-gpg@e00cb83a68c1158b29afc5217dd0582cada6d172
         with:
-          gpg_private_key: ${{ env.GPG_PRIVATE_KEY }}
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           git_user_signingkey: true
           git_commit_gpgsign: true
 
