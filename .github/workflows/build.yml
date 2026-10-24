@@ -14,6 +14,7 @@ jobs:
     env:
       MSBUILDDISABLENODEREUSE: '1'
       DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
     steps:
       - name: Checkout repository
@@ -24,7 +25,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: 10.0.x
 
       - name: Setup jprm
         run: pip install --user jprm
@@ -33,7 +34,7 @@ jobs:
         id: jprm
         uses: oddstr13/jellyfin-plugin-repository-manager@4a2b165a3dc2cfc392db865a85f23c02e9f78c68
         with:
-          dotnet-target: net9.0
+          dotnet-target: net10.0
 
       - name: Validate release version and artifact
         if: ${{ github.event_name == 'release' }}

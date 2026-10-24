@@ -23,3 +23,7 @@ https://raw.githubusercontent.com/PacmanForever/jellyfin-plugin-mediatracker/mai
 ## Configuration
 
 Set your MediaTracker instance url and API keys in the plugin settings
+
+## Privacy
+
+The plugin does not collect analytics or send telemetry to its maintainers or other third parties. To provide playback scrobbling, it sends playback state and progress, IMDb/TMDb identifiers, episode details when applicable, duration, device name, and the user's API token to the MediaTracker server configured by the administrator. Requests use HTTPS, except when the configured server is localhost.
