@@ -12,8 +12,8 @@
                 "changelog": "- \"Harden playback reporting and plugin configuration\"",
                 "targetAbi": "12.2.0.0",
                 "sourceUrl": "https://github.com/PacmanForever/jellyfin-plugin-mediatracker/releases/download/v2.0.0.10/mediatracker_2.0.0.10.zip",
-                "checksum": "00000000000000000000000000000000",
-                "timestamp": "2026-10-24T22:20:16Z"
+                "checksum": "4d82a583f1dbdcbd17c879070a6ddd15",
+                "timestamp": "2026-10-24T22:39:24Z"
             },
             {
                 "version": "2.0.0.1",
